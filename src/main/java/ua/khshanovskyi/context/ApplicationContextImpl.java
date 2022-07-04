@@ -3,9 +3,12 @@ package ua.khshanovskyi.context;
 import lombok.SneakyThrows;
 import org.reflections8.Reflections;
 import ua.khshanovskyi.annotation.Bean;
+import ua.khshanovskyi.annotation.Inject;
 import ua.khshanovskyi.exception.NoSuchBeanException;
 import ua.khshanovskyi.exception.NoUniqueBeanException;
 
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,12 +19,16 @@ public class ApplicationContextImpl implements ApplicationContext {
 
     public ApplicationContextImpl(String packageScan) {
         nameBeanMap = new HashMap<>();
-        collectBeans(scanPackageAndCreateBeans(packageScan));
+        scanPackageAndCreateBeans(packageScan);
+        injectAll();
     }
 
     @Override
     public <T> T getBean(Class<T> beanType) throws NoSuchBeanException, NoUniqueBeanException {
-        List<T> beans = getAllBeans(beanType);
+        List<T> beans = nameBeanMap.values().stream()
+                .filter(bean -> bean.getClass().isAssignableFrom(beanType))
+                .map(bean -> ((T) bean))
+                .collect(Collectors.toList());
 
         if (beans.isEmpty()) {
             throw new NoSuchBeanException("Bean for object " + beanType.getName() + " is absent");
@@ -44,23 +51,34 @@ public class ApplicationContextImpl implements ApplicationContext {
     }
 
     @Override
-    public <T> List<T> getAllBeans(Class<T> beanType) {
-        return nameBeanMap.values().stream()
-                .filter(bean -> bean.getClass().isAssignableFrom(beanType))
-                .map(bean -> ((T) bean))
-                .collect(Collectors.toList());
+    public <T> Map<String, T> getAllBeans(Class<T> beanType) {
+        return nameBeanMap.entrySet().stream()
+                .filter(entry -> entry.getValue().getClass().isAssignableFrom(beanType))
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> (T) e.getValue()));
     }
 
-    private void collectBeans(List<Object> beans) {
-        beans.forEach(bean -> nameBeanMap.put(BeanNameProvider.provideNameForBean(bean.getClass()), bean));
-    }
 
-    private List<Object> scanPackageAndCreateBeans(String packageScan) {
-        return new Reflections(packageScan)
+    private void scanPackageAndCreateBeans(String packageScan) {
+        new Reflections(packageScan)
                 .getTypesAnnotatedWith(Bean.class)
                 .stream()
                 .map(ApplicationContextImpl::createBean)
-                .collect(Collectors.toList());
+                .collect(Collectors.toList())
+                .forEach(bean -> nameBeanMap.put(BeanNameProvider.provideNameForBean(bean.getClass()), bean));
+    }
+
+    private void injectAll() {
+        nameBeanMap.values().forEach(bean ->
+                Arrays.stream(bean.getClass().getDeclaredFields())
+                        .filter(field -> field.isAnnotationPresent(Inject.class))
+                        .collect(Collectors.toList())
+                        .forEach(field -> inject(bean, field)));
+    }
+
+    @SneakyThrows
+    private void inject(Object bean, Field field) {
+        field.setAccessible(true);
+        field.set(bean, getBean(field.getType()));
     }
 
     @SneakyThrows

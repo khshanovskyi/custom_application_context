@@ -11,8 +11,9 @@ public class Task {
     public static void main(String[] args) {
         ApplicationContext appContext = new ApplicationContextImpl("ua.khshanovskyi.testBeans");
         First first = appContext.getBean(First.class);
-        var bean = appContext.getBean("third",ThirdBean.class);
+        var third = appContext.getBean("third",ThirdBean.class);
         System.out.println(first);
-        System.out.println(bean);
+        System.out.println(third);
+        System.out.println(third.getSecond());
     }
 }
