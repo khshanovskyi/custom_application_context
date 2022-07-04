@@ -4,14 +4,12 @@ import lombok.SneakyThrows;
 import org.reflections8.Reflections;
 import ua.khshanovskyi.annotation.Bean;
 import ua.khshanovskyi.annotation.Inject;
+import ua.khshanovskyi.annotation.Qualifier;
 import ua.khshanovskyi.exception.NoSuchBeanException;
 import ua.khshanovskyi.exception.NoUniqueBeanException;
 
 import java.lang.reflect.Field;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class ApplicationContextImpl implements ApplicationContext {
@@ -25,18 +23,30 @@ public class ApplicationContextImpl implements ApplicationContext {
 
     @Override
     public <T> T getBean(Class<T> beanType) throws NoSuchBeanException, NoUniqueBeanException {
+        if (beanType.isInterface()) {
+            Reflections reflections = new Reflections(beanType.getPackage());
+            List<Class<?>> classes = new ArrayList<>(reflections.getSubTypesOf(beanType));
+            isNotEmptyAndUnique(classes, beanType);
+            return getBeanOrThrows((Class<T>) classes.get(0));
+        }
+        return getBeanOrThrows(beanType);
+    }
+
+    private <T> T getBeanOrThrows(Class<T> beanType) throws NoSuchBeanException, NoUniqueBeanException {
         List<T> beans = nameBeanMap.values().stream()
                 .filter(bean -> bean.getClass().isAssignableFrom(beanType))
                 .map(bean -> ((T) bean))
                 .collect(Collectors.toList());
+        return isNotEmptyAndUnique((List<Class<?>>) beans, beanType) ? beans.get(0) : null;
+    }
 
+    private <T> boolean isNotEmptyAndUnique(List<Class<?>> beans, Class<T> beanType) throws NoSuchBeanException, NoUniqueBeanException {
         if (beans.isEmpty()) {
             throw new NoSuchBeanException("Bean for object " + beanType.getName() + " is absent");
         } else if (beans.size() > 1) {
             throw new NoUniqueBeanException("Object " + beanType.getName() + " contains " + beans.size() + " beans");
         }
-
-        return beans.get(0);
+        return true;
     }
 
     @Override
@@ -48,6 +58,16 @@ public class ApplicationContextImpl implements ApplicationContext {
                 .map(bean -> ((T) bean))
                 .findAny()
                 .orElseThrow(() -> new NoSuchBeanException("Bean for object " + beanType.getName() + " is absent"));
+    }
+
+    @Override
+    public <T> T getBean(String name) throws NoSuchBeanException {
+        return nameBeanMap.entrySet().stream()
+                .filter(entry -> entry.getKey().equals(name))
+                .map(Map.Entry::getValue)
+                .map(bean -> ((T) bean))
+                .findAny()
+                .orElseThrow(() -> new NoSuchBeanException("Bean for object " + name + " is absent"));
     }
 
     @Override
@@ -67,6 +87,12 @@ public class ApplicationContextImpl implements ApplicationContext {
                 .forEach(bean -> nameBeanMap.put(BeanNameProvider.provideNameForBean(bean.getClass()), bean));
     }
 
+    @SneakyThrows
+    private static <T> T createBean(Class<T> beanType) {
+        return beanType.getConstructor().newInstance();
+    }
+
+
     private void injectAll() {
         nameBeanMap.values().forEach(bean ->
                 Arrays.stream(bean.getClass().getDeclaredFields())
@@ -78,11 +104,15 @@ public class ApplicationContextImpl implements ApplicationContext {
     @SneakyThrows
     private void inject(Object bean, Field field) {
         field.setAccessible(true);
-        field.set(bean, getBean(field.getType()));
+        if (withQualifier(field)) {
+            Object qBean = getBean(field.getAnnotation(Qualifier.class).name());
+            field.set(bean, qBean);
+        } else {
+            field.set(bean, getBean(field.getType()));
+        }
     }
 
-    @SneakyThrows
-    private static <T> T createBean(Class<T> beanType) {
-        return beanType.getConstructor().newInstance();
+    private boolean withQualifier(Field field) {
+        return field.isAnnotationPresent(Qualifier.class);
     }
 }
